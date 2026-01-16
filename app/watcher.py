@@ -15,7 +15,7 @@ from app.config import (
     CURRENCY,
     CHECK_INTERVAL_SECONDS,
 )
-from app.aviasales import fetch_cheapest_ticket, fetch_special_offers
+from app.aviasales import fetch_tickets, fetch_special_offers
 from app.telegram import send_ticket_notification
 from app.logger import setup_logger
 
@@ -77,7 +77,7 @@ def run_watcher() -> None:
                 for origin in ORIGINS:
                     for destination in DESTINATIONS:
                         # ===== обычные билеты =====
-                        ticket = fetch_cheapest_ticket(
+                        tickets = fetch_tickets(
                             token=AVIASALES_TOKEN,
                             origin=origin,
                             destination=destination,
@@ -86,13 +86,43 @@ def run_watcher() -> None:
                             max_duration_minutes=MAX_DURATION_MINUTES,
                             currency=CURRENCY,
                         )
-                        if ticket:
-                            ticket["date"] = date
-                            ticket["origin_airport"] = origin
-                            ticket["destination_airport"] = destination
 
-                            # ключ по рейсу
-                            key = get_ticket_key(ticket, is_special=False)
+                        for ticket in tickets:
+                            ticket["date"] = date
+                            key = get_ticket_key(ticket)
+                            prev_price = notified_prices.get(key)
+
+                            if prev_price is None or ticket["price"] < prev_price:
+                                link = build_ticket_link(ticket)
+                                if link:
+                                    day_of_week = get_weekday(ticket["date"])
+                                    send_ticket_notification(
+                                        bot_token=TELEGRAM_BOT_TOKEN,
+                                        user_id=TELEGRAM_USER_ID,
+                                        origin=ticket["origin_airport"],
+                                        destination=ticket["destination_airport"],
+                                        date=ticket["date"],
+                                        price=ticket["price"],
+                                        affiliate_link=link,
+                                    )
+                                    notified_prices[key] = ticket["price"]
+                                    logger.info("Уведомление: %s → %s, %s ₽ (%s)", origin, destination, ticket["price"],
+                                                day_of_week)
+
+                        # ===== специальные предложения =====
+                        special_tickets = fetch_special_offers(
+                            token=AVIASALES_TOKEN,
+                            origin=origin,
+                            destination=destination,
+                            max_price=MAX_PRICE - 1500,
+                            currency=CURRENCY,
+                        )
+
+                        for ticket in special_tickets:
+                            ticket["date"] = ticket["departure_at"][:10]
+
+                            # ключ рейса для спецпредложения
+                            key = get_ticket_key(ticket, is_special=True)
                             prev_price = notified_prices.get(key)
 
                             if prev_price is None or ticket["price"] < prev_price:
@@ -110,7 +140,7 @@ def run_watcher() -> None:
                                     )
                                     notified_prices[key] = ticket["price"]
                                     logger.info(
-                                        "Уведомление отправлено для обычного билета: %s → %s, %s ₽ (%s)",
+                                        "Уведомление для спецпредложения: %s → %s, %s ₽ (%s)",
                                         origin,
                                         destination,
                                         ticket["price"],
@@ -118,56 +148,10 @@ def run_watcher() -> None:
                                     )
                             else:
                                 logger.debug(
-                                    "Цена не изменилась для обычного билета: %s → %s, %s ₽",
-                                    origin,
-                                    destination,
-                                    ticket["price"]
-                                )
-
-                        # ===== специальные предложения =====
-                        special_ticket = fetch_special_offers(
-                            token=AVIASALES_TOKEN,
-                            origin=origin,
-                            destination=destination,
-                            max_price=MAX_PRICE,
-                            currency=CURRENCY,
-                        )
-                        if special_ticket:
-                            special_ticket["date"] = special_ticket["departure_at"][:10]
-                            special_ticket["origin_airport"] = origin
-                            special_ticket["destination_airport"] = destination
-
-                            # ключ по signature
-                            key = get_ticket_key(special_ticket, is_special=True)
-                            prev_price = notified_prices.get(key)
-
-                            if prev_price is None or special_ticket["price"] < prev_price:
-                                link = build_ticket_link(special_ticket)
-                                if link:
-                                    day_of_week = get_weekday(special_ticket["date"])
-                                    send_ticket_notification(
-                                        bot_token=TELEGRAM_BOT_TOKEN,
-                                        user_id=TELEGRAM_USER_ID,
-                                        origin=special_ticket["origin_airport"],
-                                        destination=special_ticket["destination_airport"],
-                                        date=special_ticket["date"],
-                                        price=special_ticket["price"],
-                                        affiliate_link=link,
-                                    )
-                                    notified_prices[key] = special_ticket["price"]
-                                    logger.info(
-                                        "Уведомление отправлено для спецпредложения: %s → %s, %s ₽ (%s)",
-                                        origin,
-                                        destination,
-                                        special_ticket["price"],
-                                        day_of_week
-                                    )
-                            else:
-                                logger.debug(
                                     "Цена не изменилась для спецпредложения: %s → %s, %s ₽",
                                     origin,
                                     destination,
-                                    special_ticket["price"]
+                                    ticket["price"]
                                 )
 
             logger.info("Ожидание %s секунд", CHECK_INTERVAL_SECONDS)

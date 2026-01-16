@@ -5,7 +5,7 @@ from typing import Optional, Dict
 logger = logging.getLogger("aviasales_watcher")
 
 
-def fetch_cheapest_ticket(
+def fetch_tickets(
     token: str,
     origin: str,
     destination: str,
@@ -17,12 +17,10 @@ def fetch_cheapest_ticket(
     currency: str = "rub",
     limit: int = 1000,
     page: int = 1
-) -> Optional[Dict]:
+) -> list[Dict]:
     """
-    Запрашивает Aviasales Prices for Dates API и возвращает
-    самый дешёвый билет на конкретную дату не дороже max_price.
+    Возвращает список всех билетов на дату, подходящих под фильтры.
     """
-
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
         "origin": origin,
@@ -42,61 +40,33 @@ def fetch_cheapest_ticket(
         response.raise_for_status()
     except Exception as e:
         logger.exception("Ошибка запроса Aviasales: %s", e)
-        return None
+        return []
 
     data = response.json()
-
     if not data.get("success") or not data.get("data"):
-        logger.info(
-            "Aviasales: нет данных %s → %s на %s",
-            origin,
-            destination,
-            date,
-        )
-        return None
+        logger.info("Aviasales: нет данных %s → %s на %s", origin, destination, date)
+        return []
 
-    cheapest = None
-
+    results = []
     for offer in data["data"]:
         price = int(offer.get("price", 0))
         duration = int(offer.get("duration", 0))
-
-        if price > max_price:
+        if price > max_price or duration > max_duration_minutes:
             continue
 
-        if duration > max_duration_minutes:
-            continue
+        results.append({
+            "price": price,
+            "departure_at": offer.get("departure_at"),
+            "return_at": offer.get("return_at"),
+            "destination_airport": offer.get("destination_airport"),
+            "origin_airport": offer.get("origin_airport"),
+            "link": offer.get("link"),
+            "transfers": offer.get("transfers"),
+            "duration": duration,
+            "flight_number": offer.get("flight_number"),
+        })
 
-        if cheapest is None or price < cheapest["price"]:
-            cheapest = {
-                "price": price,
-                "departure_at": offer.get("departure_at"),
-                "return_at": offer.get("return_at"),
-                "destination_airport": offer.get("destination_airport"),
-                "origin_airport": offer.get("origin_airport"),
-                "link": offer.get("link"),
-                "transfers": offer.get("transfers"),
-                "duration": offer.get("duration"),
-            }
-
-    if cheapest:
-        logger.info(
-            "Aviasales: найден билет %s → %s на %s — %s ₽",
-            origin,
-            destination,
-            date,
-            cheapest["price"],
-        )
-    else:
-        logger.info(
-            "Aviasales: билетов на %s не найдено в диапазоне ≤ %s ₽ (%s → %s)",
-            date,
-            max_price,
-            origin,
-            destination,
-        )
-
-    return cheapest
+    return results
 
 
 def fetch_special_offers(
@@ -105,11 +75,9 @@ def fetch_special_offers(
     destination: str,
     max_price: int,
     currency: str = "rub",
-) -> Optional[Dict]:
+) -> list[Dict]:
     """
-    Получает аномально дешёвые билеты через Aviasales get_special_offers API.
-    Фильтрует по цене и по месяцу, если задан.
-    Возвращает самый дешёвый билет среди найденных.
+    Возвращает список всех специальных предложений, подходящих по цене.
     """
     url = "https://api.travelpayouts.com/aviasales/v3/get_special_offers"
     params = {
@@ -126,50 +94,31 @@ def fetch_special_offers(
         response.raise_for_status()
     except Exception as e:
         logger.exception("Ошибка запроса Aviasales special offers: %s", e)
-        return None
+        return []
 
     data = response.json()
     if not data.get("success") or not data.get("data"):
         logger.info("Aviasales: нет специальных предложений %s → %s", origin, destination)
-        return None
+        return []
 
-    cheapest = None
+    results = []
     for offer in data["data"]:
         price = int(offer.get("price", 0))
-        departure_at = offer.get("departure_at", "")
-        if not departure_at:
+        departure_at = offer.get("departure_at")
+        if not departure_at or (max_price and price > max_price):
             continue
 
-        if max_price and price > max_price:
-            continue
+        results.append({
+            "price": price,
+            "departure_at": departure_at,
+            "return_at": offer.get("return_at"),
+            "origin_airport": offer.get("origin_airport"),
+            "destination_airport": offer.get("destination_airport"),
+            "link": offer.get("link"),
+            "airline": offer.get("airline"),
+            "flight_number": offer.get("flight_number"),
+            "signature": offer.get("signature"),
+            "duration": offer.get("duration"),
+        })
 
-        if cheapest is None or price < cheapest["price"]:
-            cheapest = {
-                "price": price,
-                "departure_at": departure_at,
-                "return_at": offer.get("return_at"),
-                "origin_airport": offer.get("origin_airport"),
-                "destination_airport": offer.get("destination_airport"),
-                "link": offer.get("link"),
-                "airline": offer.get("airline"),
-                "flight_number": offer.get("flight_number"),
-                "duration": offer.get("duration"),
-            }
-
-    if cheapest:
-        logger.info(
-            "Aviasales special offer: найден билет %s → %s на %s ₽ (%s)",
-            origin,
-            destination,
-            cheapest["price"],
-            cheapest["departure_at"],
-        )
-    else:
-        logger.info(
-            "Aviasales special offer: билетов не найдено в диапазоне ≤ %s ₽ (%s → %s)",
-            max_price,
-            origin,
-            destination,
-        )
-
-    return cheapest
+    return results
