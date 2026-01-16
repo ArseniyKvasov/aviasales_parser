@@ -1,0 +1,28 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+AVIASALES_TOKEN = os.getenv("AVIASALES_TOKEN")
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID"))
+
+AFFILIATE_MARKER = os.getenv("AFFILIATE_MARKER")
+
+ORIGINS = ["DXB", "SHJ", "DWC"]
+
+DESTINATIONS = ["SVO", "VKO", "DME"]
+
+DATES = [
+    "2026-02-16",
+    "2026-02-23",
+    "2026-03-02",
+]
+
+MAX_PRICE = 9000
+CURRENCY = "rub"
+
+MAX_DURATION_MINUTES = 10 * 60
+
+CHECK_INTERVAL_SECONDS = 60
